@@ -1,23 +1,13 @@
 package com.fitshophubmobile
 
-import android.app.Activity
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
 
-class PermissionsRationaleActivity : Activity() {
-  override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
-
-    // Minimal implementation: open your site's privacy page (or homepage) and exit.
-    // Health Connect uses this activity when the user wants to see why permissions are needed.
-    val url = "https://fitshop-hub.vercel.app"
-    try {
-      startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    } catch (_: Throwable) {
-      // ignore
+class PermissionsRationaleActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // This is a placeholder activity for Health Connect permission rationale.
+        // It can be expanded to show a custom UI explaining why permissions are needed.
+        finish()
     }
-
-    finish()
-  }
 }

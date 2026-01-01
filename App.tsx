@@ -64,59 +64,6 @@ function App() {
 
   const showTopBar = false;
 
-  const checkForUpdates = useCallback(async () => {
-    if (checkingUpdate) return;
-    setCheckingUpdate(true);
-    try {
-      const url = `${LATEST_URL}${LATEST_URL.includes('?') ? '&' : '?'}t=${Date.now()}`;
-      const resp = await fetch(url, {
-        headers: {
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-        },
-      });
-      if (!resp.ok) {
-        throw new Error('Unable to check updates right now.');
-      }
-      const data = await resp.json();
-      const latestCode = Number(data?.versionCode ?? 0);
-      const apkUrl = String(data?.apkUrl ?? '');
-      const notes = String(data?.releaseNotes ?? '');
-
-      if (!latestCode || !apkUrl) {
-        throw new Error('Update info is invalid.');
-      }
-
-      if (latestCode <= APP_VERSION_CODE) {
-        Alert.alert('Up to date', 'You already have the latest version.');
-        return;
-      }
-
-      Alert.alert(
-        'Update available',
-        `${notes ? notes + '\n\n' : ''}Open download page?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Download',
-            onPress: async () => {
-              const ok = await Linking.canOpenURL(apkUrl);
-              if (!ok) {
-                Alert.alert('Error', 'Cannot open download link.');
-                return;
-              }
-              await Linking.openURL(apkUrl);
-            },
-          },
-        ],
-      );
-    } catch (e: any) {
-      Alert.alert('Update check failed', String(e?.message ?? e));
-    } finally {
-      setCheckingUpdate(false);
-    }
-  }, [checkingUpdate]);
-
   const injectedAutoTokenJs = useMemo(() => {
     // Runs inside the WebView page context. Attempts to create a token using the current web session.
     // If user is not logged in, server returns 401 and we just ignore.
@@ -302,6 +249,59 @@ function App() {
     setLastSyncDetails(`read=${steps} synced`);
   }, [ensureHealthConnectReady, lastSyncedSteps, readTodaySteps]);
 
+  const checkForUpdates = useCallback(async () => {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const url = `${LATEST_URL}${LATEST_URL.includes('?') ? '&' : '?'}t=${Date.now()}`;
+      const resp = await fetch(url, {
+        headers: {
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+      });
+      if (!resp.ok) {
+        throw new Error('Unable to check updates right now.');
+      }
+      const data = await resp.json();
+      const latestCode = Number(data?.versionCode ?? 0);
+      const apkUrl = String(data?.apkUrl ?? '');
+      const notes = String(data?.releaseNotes ?? '');
+
+      if (!latestCode || !apkUrl) {
+        throw new Error('Update info is invalid.');
+      }
+
+      if (latestCode <= APP_VERSION_CODE) {
+        Alert.alert('Up to date', 'You already have the latest version.');
+        return;
+      }
+
+      Alert.alert(
+        'Update available',
+        `${notes ? notes + '\n\n' : ''}Open download page?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Download',
+            onPress: async () => {
+              const ok = await Linking.canOpenURL(apkUrl);
+              if (!ok) {
+                Alert.alert('Error', 'Cannot open download link.');
+                return;
+              }
+              await Linking.openURL(apkUrl);
+            },
+          },
+        ],
+      );
+    } catch (e: any) {
+      Alert.alert('Update check failed', String(e?.message ?? e));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [checkingUpdate]);
+
   useEffect(() => {
     let alive = true;
 
@@ -329,7 +329,7 @@ function App() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [autoSetupSteps]);
 
   useEffect(() => {
     // Foreground auto sync: run once shortly after app opens, then every 60s.
@@ -501,6 +501,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#0b0b0b',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#222',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   syncText: {
     color: '#9ca3af',
