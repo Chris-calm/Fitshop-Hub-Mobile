@@ -41,6 +41,7 @@ function App() {
   const [lastReadSteps, setLastReadSteps] = useState<number | null>(null);
   const [lastSyncDetails, setLastSyncDetails] = useState<string>('');
   const tokenRef = useRef<string>('');
+  const syncingMarkedRef = useRef<boolean>(false);
   const hcReadyRef = useRef<boolean>(false);
   const hcRequestInFlightRef = useRef<boolean>(false);
   const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -206,6 +207,21 @@ function App() {
       return;
     }
 
+    // Mark server-side syncing started (once per app session)
+    if (!syncingMarkedRef.current) {
+      syncingMarkedRef.current = true;
+      fetch(STEPS_SAVE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ syncing: 1 }),
+      }).catch(() => {
+        // ignore
+      });
+    }
+
     const ready = await ensureHealthConnectReady();
     if (!ready) {
       return;
@@ -234,7 +250,7 @@ function App() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ steps }),
+      body: JSON.stringify({ steps, syncing: 0 }),
     });
 
     const json = await resp.json().catch(() => null);
