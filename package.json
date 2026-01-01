@@ -1,5 +1,5 @@
 {
- "name": "fitshop-hub-mobile",
+  "name": "fitshophub-mobile",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -15,8 +15,7 @@
     "react": "19.2.0",
     "react-native": "0.83.1",
     "react-native-safe-area-context": "^5.5.2",
-    "react-native-webview": "^13.16.0",
-    "react-native-health-connect": "^3.5.0"
+    "react-native-webview": "^13.16.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
