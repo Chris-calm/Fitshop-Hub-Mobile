@@ -8,6 +8,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
+  AppStateStatus,
   Alert,
   Linking,
   Platform,
@@ -20,6 +22,14 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
+import {
+  getGrantedPermissions,
+  getSdkStatus,
+  initialize,
+  readRecords,
+  requestPermission,
+} from 'react-native-health-connect';
 
 const SITE_URL = 'https://fitshop-hub.vercel.app';
 const LATEST_URL = 'https://fitshop-hub.vercel.app/assets/apk/latest.json';
@@ -34,6 +44,12 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const tokenRef = useRef<string>('');
+  const healthConnectReadyRef = useRef(false);
+  const permissionGrantedRef = useRef(false);
+  const syncingRef = useRef(false);
+  const lastSentRef = useRef<{ dateKey: string; steps: number } | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const userAgent = useMemo(() => {
     const base = Platform.OS === 'android' ? 'Android' : Platform.OS;
@@ -122,6 +138,163 @@ function App() {
     }
   }, [checkingUpdate]);
 
+  const postSyncingState = useCallback(async (syncing: boolean) => {
+    if (!tokenRef.current) return;
+    try {
+      await fetch(STEPS_SAVE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenRef.current}`,
+        },
+        body: JSON.stringify({ syncing: syncing ? 1 : 0 }),
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const ensureHealthConnectReady = useCallback(async () => {
+    if (Platform.OS !== 'android') return false;
+    if (healthConnectReadyRef.current) return true;
+
+    const status = await getSdkStatus();
+    if (status !== 3) {
+      return false;
+    }
+    const ok = await initialize();
+    healthConnectReadyRef.current = !!ok;
+    return healthConnectReadyRef.current;
+  }, []);
+
+  const ensureStepsPermission = useCallback(async () => {
+    if (Platform.OS !== 'android') return false;
+    if (permissionGrantedRef.current) return true;
+
+    const granted = await getGrantedPermissions();
+    const hasSteps = Array.isArray(granted)
+      ? granted.some((p: any) => p && p.accessType === 'read' && p.recordType === 'Steps')
+      : false;
+
+    if (hasSteps) {
+      permissionGrantedRef.current = true;
+      return true;
+    }
+
+    const requested = await requestPermission([{ accessType: 'read', recordType: 'Steps' } as any]);
+    const nowHasSteps = Array.isArray(requested)
+      ? requested.some((p: any) => p && p.accessType === 'read' && p.recordType === 'Steps')
+      : false;
+
+    permissionGrantedRef.current = nowHasSteps;
+    return permissionGrantedRef.current;
+  }, []);
+
+  const getTodayRange = useCallback(() => {
+    const now = new Date();
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    return { startTime: start.toISOString(), endTime: now.toISOString() };
+  }, []);
+
+  const getLocalDateKey = useCallback(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }, []);
+
+  const fetchTodaysSteps = useCallback(async () => {
+    const { startTime, endTime } = getTodayRange();
+    const res: any = await readRecords('Steps' as any, {
+      timeRangeFilter: {
+        operator: 'between',
+        startTime,
+        endTime,
+      },
+      ascendingOrder: false,
+      pageSize: 5000,
+    } as any);
+
+    const records = Array.isArray(res?.records) ? res.records : [];
+    const total = records.reduce((sum: number, r: any) => sum + Number(r?.count ?? 0), 0);
+    return Math.max(0, Math.floor(total));
+  }, [getTodayRange]);
+
+  const syncStepsOnce = useCallback(async () => {
+    if (Platform.OS !== 'android') return;
+    if (syncingRef.current) return;
+    if (!tokenRef.current) {
+      return;
+    }
+    if (appStateRef.current !== 'active') return;
+
+    const dateKey = getLocalDateKey();
+
+    syncingRef.current = true;
+    try {
+      await postSyncingState(true);
+
+      const ready = await ensureHealthConnectReady();
+      if (!ready) {
+        return;
+      }
+
+      const hasPerm = await ensureStepsPermission();
+      if (!hasPerm) {
+        return;
+      }
+
+      const steps = await fetchTodaysSteps();
+      const last = lastSentRef.current;
+      const alreadySentToday = last && last.dateKey === dateKey;
+      if (alreadySentToday && steps <= last.steps) return;
+
+      const resp = await fetch(STEPS_SAVE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenRef.current}`,
+        },
+        body: JSON.stringify({ steps, force: 0, syncing: 0 }),
+      });
+      if (resp.ok) {
+        lastSentRef.current = { dateKey, steps };
+      }
+    } catch (e) {
+      console.log('[FH] Step sync error', String((e as any)?.message ?? e));
+    } finally {
+      await postSyncingState(false);
+      syncingRef.current = false;
+    }
+  }, [ensureHealthConnectReady, ensureStepsPermission, fetchTodaysSteps, getLocalDateKey, postSyncingState]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const sub = AppState.addEventListener('change', (next) => {
+      appStateRef.current = next;
+      if (next === 'active') {
+        void syncStepsOnce();
+      }
+    });
+
+    intervalRef.current = setInterval(() => {
+      void syncStepsOnce();
+    }, 5 * 60 * 1000);
+
+    void syncStepsOnce();
+
+    return () => {
+      sub.remove();
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [syncStepsOnce]);
+
   useEffect(() => {
     let alive = true;
 
@@ -130,6 +303,9 @@ function App() {
       if (!alive) return;
       if (stored) {
         tokenRef.current = stored;
+        if (Platform.OS === 'android') {
+          void syncStepsOnce();
+        }
       } else {
       }
     })();
@@ -137,7 +313,7 @@ function App() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [syncStepsOnce]);
 
   return (
     <SafeAreaProvider>
@@ -185,6 +361,9 @@ function App() {
                   const token = String(payload.token);
                   tokenRef.current = token;
                   await AsyncStorage.setItem('fh_api_token', token);
+                  if (Platform.OS === 'android') {
+                    void syncStepsOnce();
+                  }
                 }
               } catch {
                 // ignore
