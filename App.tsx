@@ -35,6 +35,7 @@ const SITE_URL = 'https://fitshop-hub.vercel.app';
 const LATEST_URL = 'https://fitshop-hub.vercel.app/assets/apk/latest.json';
 const TOKEN_CREATE_URL = 'https://fitshop-hub.vercel.app/index.php?page=api_token_create';
 const STEPS_SAVE_URL = 'https://fitshop-hub.vercel.app/index.php?page=api_steps_save';
+const FOOD_SCAN_URL = 'https://fitshop-hub.vercel.app/index.php?page=food_scan';
 
 // Keep this in sync with android/app/build.gradle (versionCode)
 const APP_VERSION_CODE = 1;
@@ -43,6 +44,7 @@ function App() {
   const webRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [webUrl, setWebUrl] = useState(SITE_URL);
   const tokenRef = useRef<string>('');
   const healthConnectReadyRef = useRef(false);
   const permissionGrantedRef = useRef(false);
@@ -57,6 +59,10 @@ function App() {
   }, []);
 
   const showTopBar = false;
+
+  const goToFoodScan = useCallback(() => {
+    setWebUrl(FOOD_SCAN_URL);
+  }, []);
 
   const injectedAutoTokenJs = useMemo(() => {
     // Runs inside the WebView page context. Attempts to create a token using the current web session.
@@ -347,7 +353,7 @@ function App() {
         <View style={styles.webWrap}>
           <WebView
             ref={webRef}
-            source={{ uri: SITE_URL }}
+            source={{ uri: webUrl }}
             onLoadStart={() => setLoading(true)}
             onLoadEnd={() => setLoading(false)}
             userAgent={userAgent}
@@ -372,6 +378,13 @@ function App() {
             allowsBackForwardNavigationGestures
             setSupportMultipleWindows={false}
           />
+
+          <Pressable
+            onPress={goToFoodScan}
+            style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+          >
+            <Text style={styles.fabText}>Food Scan</Text>
+          </Pressable>
 
           {loading ? (
             <View style={styles.loading}>
@@ -449,6 +462,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+  fab: {
+    position: 'absolute',
+    right: 14,
+    bottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: '#6366F1',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  fabPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
+  },
+  fabText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 
