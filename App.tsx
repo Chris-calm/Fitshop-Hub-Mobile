@@ -11,6 +11,7 @@ import {
   AppState,
   AppStateStatus,
   Alert,
+  BackHandler,
   Linking,
   Platform,
   Pressable,
@@ -45,6 +46,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [webUrl, setWebUrl] = useState(SITE_URL);
+  const [canGoBack, setCanGoBack] = useState(false);
   const tokenRef = useRef<string>('');
   const healthConnectReadyRef = useRef(false);
   const permissionGrantedRef = useRef(false);
@@ -302,6 +304,22 @@ function App() {
   }, [syncStepsOnce]);
 
   useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (canGoBack) {
+        webRef.current?.goBack();
+        return true;
+      }
+      return false;
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, [canGoBack]);
+
+  useEffect(() => {
     let alive = true;
 
     (async () => {
@@ -356,6 +374,9 @@ function App() {
             source={{ uri: webUrl }}
             onLoadStart={() => setLoading(true)}
             onLoadEnd={() => setLoading(false)}
+            onNavigationStateChange={(navState) => {
+              setCanGoBack(Boolean(navState.canGoBack));
+            }}
             userAgent={userAgent}
             javaScriptEnabled
             domStorageEnabled
