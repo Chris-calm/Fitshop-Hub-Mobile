@@ -83,8 +83,8 @@ android {
         applicationId "com.fitshophubmobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 4
+        versionName "1.0.3"
     }
     signingConfigs {
         debug {
@@ -120,4 +120,10 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+}
+
+tasks.matching { task ->
+    task.name.startsWith("externalNativeBuildClean")
+}.configureEach { task ->
+    task.enabled = false
 }

@@ -31,6 +31,7 @@ import {
   readRecords,
   requestPermission,
 } from 'react-native-health-connect';
+import * as HealthConnectNS from 'react-native-health-connect';
 
 const SITE_URL = 'https://fitshop-hub.vercel.app';
 const LATEST_URL = 'https://fitshop-hub.vercel.app/assets/apk/latest.json';
@@ -39,7 +40,7 @@ const STEPS_SAVE_URL = 'https://fitshop-hub.vercel.app/index.php?page=api_steps_
 const FOOD_SCAN_URL = 'https://fitshop-hub.vercel.app/index.php?page=food_scan';
 
 // Keep this in sync with android/app/build.gradle (versionCode)
-const APP_VERSION_CODE = 1;
+const APP_VERSION_CODE = 3;
 
 function App() {
   const webRef = useRef<WebView>(null);
@@ -47,6 +48,7 @@ function App() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [webUrl, setWebUrl] = useState(SITE_URL);
   const [canGoBack, setCanGoBack] = useState(false);
+  const [currentUrl, setCurrentUrl] = useState(SITE_URL);
   const tokenRef = useRef<string>('');
   const healthConnectReadyRef = useRef(false);
   const permissionGrantedRef = useRef(false);
@@ -61,6 +63,12 @@ function App() {
   }, []);
 
   const showTopBar = false;
+
+  const showFoodScanFab = useMemo(() => {
+    const u = String(currentUrl || '');
+    if (!u) return false;
+    return /[?&]page=(health|food_scan)\b/i.test(u);
+  }, [currentUrl]);
 
   const goToFoodScan = useCallback(() => {
     setWebUrl(FOOD_SCAN_URL);
@@ -149,7 +157,7 @@ function App() {
   const postSyncingState = useCallback(async (syncing: boolean) => {
     if (!tokenRef.current) return;
     try {
-      await fetch(STEPS_SAVE_URL, {
+      const r = await fetch(STEPS_SAVE_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -157,8 +165,14 @@ function App() {
         },
         body: JSON.stringify({ syncing: syncing ? 1 : 0 }),
       });
+      try {
+        const j = await r.json().catch(() => null);
+        console.log('[FH] postSyncingState', syncing ? 1 : 0, 'status=', r.status, 'resp=', j);
+      } catch {
+        console.log('[FH] postSyncingState', syncing ? 1 : 0, 'status=', r.status);
+      }
     } catch {
-      // ignore
+      console.log('[FH] postSyncingState error');
     }
   }, []);
 
@@ -167,10 +181,12 @@ function App() {
     if (healthConnectReadyRef.current) return true;
 
     const status = await getSdkStatus();
+    console.log('[FH] HealthConnect sdkStatus=', status);
     if (status !== 3) {
       return false;
     }
     const ok = await initialize();
+    console.log('[FH] HealthConnect initialize ok=', !!ok);
     healthConnectReadyRef.current = !!ok;
     return healthConnectReadyRef.current;
   }, []);
@@ -180,6 +196,7 @@ function App() {
     if (permissionGrantedRef.current) return true;
 
     const granted = await getGrantedPermissions();
+    console.log('[FH] HealthConnect granted=', granted);
     const hasSteps = Array.isArray(granted)
       ? granted.some((p: any) => p && p.accessType === 'read' && p.recordType === 'Steps')
       : false;
@@ -190,6 +207,7 @@ function App() {
     }
 
     const requested = await requestPermission([{ accessType: 'read', recordType: 'Steps' } as any]);
+    console.log('[FH] HealthConnect requested=', requested);
     const nowHasSteps = Array.isArray(requested)
       ? requested.some((p: any) => p && p.accessType === 'read' && p.recordType === 'Steps')
       : false;
@@ -215,6 +233,85 @@ function App() {
 
   const fetchTodaysSteps = useCallback(async () => {
     const { startTime, endTime } = getTodayRange();
+    const extractTotalFromAggregate = (agg: any) => {
+      if (agg == null) return null;
+      if (typeof agg === 'number' && Number.isFinite(agg)) return agg;
+
+      const tryPaths = (obj: any, paths: string[][]) => {
+        for (const path of paths) {
+          let cur = obj;
+          let ok = true;
+          for (const key of path) {
+            if (cur && typeof cur === 'object' && key in cur) {
+              cur = cur[key];
+            } else {
+              ok = false;
+              break;
+            }
+          }
+          if (ok && typeof cur === 'number' && Number.isFinite(cur)) return cur;
+        }
+        return null;
+      };
+
+      const direct = tryPaths(agg, [
+        ['count'],
+        ['steps'],
+        ['total'],
+        ['result', 'count'],
+        ['result', 'steps'],
+        ['data', 'count'],
+        ['data', 'steps'],
+      ]);
+      if (direct != null) return direct;
+
+      const scan = (val: any, depth: number): number | null => {
+        if (depth <= 0) return null;
+        if (typeof val === 'number' && Number.isFinite(val)) return val;
+        if (!val || typeof val !== 'object') return null;
+        for (const [k, v] of Object.entries(val)) {
+          if (k === 'metadata') continue;
+          const found = scan(v, depth - 1);
+          if (found != null) return found;
+        }
+        return null;
+      };
+
+      return scan(agg, 4);
+    };
+
+    const aggregateFn: any =
+      (HealthConnectNS as any).aggregateRecord ||
+      (HealthConnectNS as any).aggregateRecords ||
+      (HealthConnectNS as any).aggregate;
+
+    if (typeof aggregateFn === 'function') {
+      try {
+        console.log('[FH] aggregate Steps range', startTime, endTime);
+        let aggRes: any;
+        try {
+          aggRes = await aggregateFn({
+            recordType: 'Steps',
+            timeRangeFilter: { operator: 'between', startTime, endTime },
+          });
+        } catch (e1) {
+          aggRes = await aggregateFn('Steps', {
+            timeRangeFilter: { operator: 'between', startTime, endTime },
+          });
+        }
+        console.log('[FH] aggregate Steps result', aggRes);
+        const totalAgg = extractTotalFromAggregate(aggRes);
+        if (totalAgg != null) {
+          return Math.max(0, Math.floor(Number(totalAgg)));
+        }
+      } catch (e: any) {
+        console.log('[FH] aggregate Steps error', String(e?.message ?? e));
+      }
+    } else {
+      console.log('[FH] aggregate fn not found; falling back to readRecords');
+    }
+
+    console.log('[FH] readRecords Steps range', startTime, endTime);
     const res: any = await readRecords('Steps' as any, {
       timeRangeFilter: {
         operator: 'between',
@@ -225,6 +322,7 @@ function App() {
       pageSize: 5000,
     } as any);
 
+    console.log('[FH] readRecords Steps result', res);
     const records = Array.isArray(res?.records) ? res.records : [];
     const total = records.reduce((sum: number, r: any) => sum + Number(r?.count ?? 0), 0);
     return Math.max(0, Math.floor(total));
@@ -234,6 +332,7 @@ function App() {
     if (Platform.OS !== 'android') return;
     if (syncingRef.current) return;
     if (!tokenRef.current) {
+      webRef.current?.injectJavaScript(injectedAutoTokenJs);
       return;
     }
     if (appStateRef.current !== 'active') return;
@@ -255,6 +354,7 @@ function App() {
       }
 
       const steps = await fetchTodaysSteps();
+      console.log('[FH] steps today total=', steps);
       const last = lastSentRef.current;
       const alreadySentToday = last && last.dateKey === dateKey;
       if (alreadySentToday && steps <= last.steps) return;
@@ -267,6 +367,8 @@ function App() {
         },
         body: JSON.stringify({ steps, force: 0, syncing: 0 }),
       });
+      const respJson = await resp.json().catch(() => null);
+      console.log('[FH] steps_save status=', resp.status, 'resp=', respJson);
       if (resp.ok) {
         lastSentRef.current = { dateKey, steps };
       }
@@ -376,6 +478,9 @@ function App() {
             onLoadEnd={() => setLoading(false)}
             onNavigationStateChange={(navState) => {
               setCanGoBack(Boolean(navState.canGoBack));
+              if (navState && typeof navState.url === 'string' && navState.url) {
+                setCurrentUrl(navState.url);
+              }
             }}
             userAgent={userAgent}
             javaScriptEnabled
@@ -400,12 +505,14 @@ function App() {
             setSupportMultipleWindows={false}
           />
 
-          <Pressable
-            onPress={goToFoodScan}
-            style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
-          >
-            <Text style={styles.fabText}>Food Scan</Text>
-          </Pressable>
+          {showFoodScanFab ? (
+            <Pressable
+              onPress={goToFoodScan}
+              style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+            >
+              <Text style={styles.fabText}>Food Scan</Text>
+            </Pressable>
+          ) : null}
 
           {loading ? (
             <View style={styles.loading}>
